@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Column Extractor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .file-upload {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .file-upload:hover {
+            border-color: #999;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        #status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .preview {
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .filename-input {
+            margin: 20px 0;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            width: 100%;
+            max-width: 300px;
+        }
+        .input-group {
+            margin: 20px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV Column Extractor</h1>
+        <p>Upload your source CSV file (with 224 columns) and output CSV file (with 16 columns) to extract matching columns.</p>
+        
+        <div class="file-upload">
+            <h3>Source CSV (224 columns)</h3>
+            <input type="file" id="sourceFile" accept=".csv">
+            <p>Accepted format: CSV</p>
+        </div>
+
+        <div class="file-upload">
+            <h3>Output CSV (16 columns)</h3>
+            <input type="file" id="templateFile" accept=".csv">
+            <p>Accepted format: CSV</p>
+        </div>
+
+        <div class="input-group">
+            <label for="outputFilename">Output Filename:</label>
+            <input 
+                type="text" 
+                id="outputFilename" 
+                class="filename-input" 
+                placeholder="Enter filename (e.g., my_data.csv)"
+                value="extracted_data.csv">
+        </div>
+
+        <button id="processButton" disabled>Process Files</button>
+        <button id="downloadButton" disabled>Download Result</button>
+
+        <div id="status"></div>
+        <div id="preview" class="preview"></div>
+    </div>
+
+    <script>
+        let sourceData = null;
+        let templateData = null;
+        let processedData = null;
+
+        function cleanData(value) {
+            if (value === null || value === undefined) return '';
+            let cleanValue = String(value);
+            cleanValue = cleanValue.replace(/[£$€¥]/g, '');
+            cleanValue = cleanValue.replace(/[+\-*\/=%]/g, '');
+            cleanValue = cleanValue.replace(/\s+/g, ' ').trim();
+            cleanValue = cleanValue.replace(/[\(\)\[\]{}]/g, '');
+            cleanValue = cleanValue.replace(/[^0-9a-zA-Z,.\s]/g, '');
+            return cleanValue;
+        }
+
+        function handleSourceFile(e) {
+            const file = e.target.files[0];
+            if (file) {
+                Papa.parse(file, {
+                    header: true,
+                    complete: function(results) {
+                        sourceData = results.data;
+                        updateStatus();
+                    },
+                    error: function(error) {
+                        showStatus('Error reading source file: ' + error.message, true);
+                    }
+                });
+            }
+        }
+
+        function handleTemplateFile(e) {
+            const file = e.target.files[0];
+            if (file) {
+                Papa.parse(file, {
+                    header: true,
+                    complete: function(results) {
+                        templateData = results.data;
+                        updateStatus();
+                    },
+                    error: function(error) {
+                        showStatus('Error reading output file: ' + error.message, true);
+                    }
+                });
+            }
+        }
+
+        function updateStatus() {
+            const processButton = document.getElementById('processButton');
+            processButton.disabled = !(sourceData && templateData);
+        }
+
+        function processFiles() {
+            try {
+                const templateColumns = Object.keys(templateData[0]);
+                
+                const missingColumns = templateColumns.filter(col => 
+                    !Object.keys(sourceData[0]).includes(col)
+                );
+
+                if (missingColumns.length > 0) {
+                    throw new Error(`Missing columns in source file: ${missingColumns.join(', ')}`);
+                }
+
+                processedData = sourceData.map(row => {
+                    const newRow = {};
+                    templateColumns.forEach(col => {
+                        newRow[col] = cleanData(row[col]);
+                    });
+                    return newRow;
+                });
+
+                showStatus('Processing complete! You can now download the result.', false);
+                document.getElementById('downloadButton').disabled = false;
+                
+                showPreview(processedData.slice(0, 5));
+            } catch (error) {
+                showStatus('Error processing files: ' + error.message, true);
+            }
+        }
+
+        function showStatus(message, isError) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = isError ? 'error' : 'success';
+        }
+
+        function showPreview(data) {
+            if (!data || data.length === 0) return;
+
+            const columns = Object.keys(data[0]);
+            let html = '<h3>Preview (first 5 rows)</h3><table>';
+            
+            html += '<tr>' + columns.map(col => `<th>${col}</th>`).join('') + '</tr>';
+            
+            data.forEach(row => {
+                html += '<tr>' + columns.map(col => `<td>${row[col]}</td>`).join('') + '</tr>';
+            });
+
+            html += '</table>';
+            document.getElementById('preview').innerHTML = html;
+        }
+
+        function getOutputFilename() {
+            let filename = document.getElementById('outputFilename').value.trim();
+            if (!filename.toLowerCase().endsWith('.csv')) {
+                filename += '.csv';
+            }
+            return filename;
+        }
+
+        function downloadResult() {
+            if (!processedData) return;
+
+            const csv = Papa.unparse(processedData);
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', getOutputFilename());
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        document.getElementById('sourceFile').addEventListener('change', handleSourceFile);
+        document.getElementById('templateFile').addEventListener('change', handleTemplateFile);
+        document.getElementById('processButton').addEventListener('click', processFiles);
+        document.getElementById('downloadButton').addEventListener('click', downloadResult);
+    </script>
+</body>
+</html>
