@@ -110,25 +110,31 @@
             border-radius: 4px;
             font-family: monospace;
             font-size: 12px;
-            display: none;
+        }
+        .delimiter-info {
+            margin-top: 5px;
+            font-size: 0.9em;
+            color: #666;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>CSV Column Extractor</h1>
-        <p>Upload the source CSV file and a template CSV file to extract matching columns.</p>
+        <p>Upload your source and output files. Supports comma, semicolon, and tab-delimited files with Unicode characters.</p>
         
         <div class="file-upload">
-            <h3>Source CSV</h3>
-            <input type="file" id="sourceFile" accept=".csv">
-            <p>Accepted format: CSV</p>
+            <h3>Source File</h3>
+            <input type="file" id="sourceFile" accept=".csv,.txt">
+            <p>Supported formats: CSV, TXT (comma, semicolon, or tab-delimited)</p>
+            <div id="sourceDelimiter" class="delimiter-info"></div>
         </div>
 
         <div class="file-upload">
-            <h3>Template CSV</h3>
-            <input type="file" id="templateFile" accept=".csv">
-            <p>Accepted format: CSV</p>
+            <h3>Output Template</h3>
+            <input type="file" id="templateFile" accept=".csv,.txt">
+            <p>Supported formats: CSV, TXT (comma, semicolon, or tab-delimited)</p>
+            <div id="templateDelimiter" class="delimiter-info"></div>
         </div>
 
         <div class="merge-options">
@@ -175,18 +181,142 @@
         let templateData = null;
         let processedData = null;
 
-        // Debug logging function
+        function detectDelimiter(text) {
+            const delimiters = [
+                { char: ',', name: 'comma' },
+                { char: ';', name: 'semicolon' },
+                { char: '\t', name: 'tab' }
+            ];
+            
+            // Get the first line
+            const firstLine = text.split('\n')[0];
+            
+            // Count occurrences of each delimiter
+            const counts = delimiters.map(del => ({
+                ...del,
+                count: (firstLine.match(new RegExp(del.char === '\t' ? '\t' : del.char, 'g')) || []).length
+            }));
+            
+            // Get the delimiter with the highest count
+            const detected = counts.reduce((max, current) => 
+                current.count > max.count ? current : max
+            );
+            
+            return detected;
+        }
+
+        function handleFile(file, isSource) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const text = e.target.result;
+                        const detected = detectDelimiter(text);
+                        
+                        // Show detected delimiter
+                        const infoElement = document.getElementById(isSource ? 'sourceDelimiter' : 'templateDelimiter');
+                        infoElement.textContent = `Detected delimiter: ${detected.name}`;
+                        
+                        Papa.parse(file, {
+                            header: true,
+                            delimiter: detected.char,
+                            encoding: 'UTF-8',
+                            transformHeader: (header) => {
+                                return header.trim().replace(/^\uFEFF/, '');
+                            },
+                            complete: function(results) {
+                                if (results.data && results.data.length > 0) {
+                                    logDebug(`${isSource ? 'Source' : 'Template'} file parsed:`, {
+                                        delimiter: detected.name,
+                                        columns: Object.keys(results.data[0])
+                                    });
+                                    resolve(results.data);
+                                } else {
+                                    reject(new Error('No data found in file'));
+                                }
+                            },
+                            error: function(error) {
+                                reject(error);
+                            }
+                        });
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                reader.onerror = function(e) {
+                    reject(e);
+                };
+                reader.readAsText(file, 'UTF-8');
+            });
+        }
+
         function logDebug(message, data) {
             console.log(message, data);
             const debugDiv = document.getElementById('debugInfo');
-            debugDiv.style.display = 'block';
-            debugDiv.innerHTML += `<p>${message}</p>`;
+            const timestamp = new Date().toLocaleTimeString();
+            debugDiv.innerHTML += `<p>[${timestamp}] ${message}</p>`;
             if (data) {
                 debugDiv.innerHTML += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
             }
         }
 
-        // Show/hide merge fields based on checkbox
+        async function handleSourceFile(e) {
+            const file = e.target.files[0];
+            if (file) {
+                try {
+                    sourceData = await handleFile(file, true);
+                    updateStatus();
+                } catch (error) {
+                    showStatus('Error reading source file: ' + error.message, true);
+                }
+            }
+        }
+        async function handleTemplateFile(e) {
+    const file = e.target.files[0];
+    if (file) {
+        try {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const text = e.target.result;
+                const detected = detectDelimiter(text);
+                
+                // Modified to handle header-only files
+                Papa.parse(file, {
+                    header: false, // Changed to false to get raw rows
+                    delimiter: detected.char,
+                    encoding: 'UTF-8',
+                    complete: function(results) {
+                        if (results.data && results.data[0]) {
+                            // Create a template object with just the headers
+                            const headers = results.data[0].map(h => h.trim().replace(/^\uFEFF/, ''));
+                            templateData = [
+                                headers.reduce((obj, header) => {
+                                    obj[header] = '';
+                                    return obj;
+                                }, {})
+                            ];
+                            
+                            logDebug('Template file columns:', {
+                                columnCount: headers.length,
+                                columns: headers
+                            });
+                            updateStatus();
+                        } else {
+                            showStatus('No headers found in template file', true);
+                        }
+                    },
+                    error: function(error) {
+                        showStatus('Error reading template file: ' + error.message, true);
+                    }
+                });
+            };
+            reader.readAsText(file, 'UTF-8');
+        } catch (error) {
+            showStatus('Error reading template file: ' + error.message, true);
+        }
+    }
+}
+        // Previous functions remain the same
         document.getElementById('enableMerge').addEventListener('change', function(e) {
             document.getElementById('mergeFields').style.display = 
                 e.target.checked ? 'block' : 'none';
@@ -203,40 +333,6 @@
             return cleanValue;
         }
 
-        function handleSourceFile(e) {
-            const file = e.target.files[0];
-            if (file) {
-                Papa.parse(file, {
-                    header: true,
-                    complete: function(results) {
-                        sourceData = results.data;
-                        logDebug('Source file columns:', Object.keys(sourceData[0]));
-                        updateStatus();
-                    },
-                    error: function(error) {
-                        showStatus('Error reading source file: ' + error.message, true);
-                    }
-                });
-            }
-        }
-
-        function handleTemplateFile(e) {
-            const file = e.target.files[0];
-            if (file) {
-                Papa.parse(file, {
-                    header: true,
-                    complete: function(results) {
-                        templateData = results.data;
-                        logDebug('Template file columns:', Object.keys(templateData[0]));
-                        updateStatus();
-                    },
-                    error: function(error) {
-                        showStatus('Error reading output file: ' + error.message, true);
-                    }
-                });
-            }
-        }
-
         function updateStatus() {
             const processButton = document.getElementById('processButton');
             processButton.disabled = !(sourceData && templateData);
@@ -250,21 +346,15 @@
 
         function processFiles() {
             try {
-                document.getElementById('debugInfo').innerHTML = ''; // Clear debug info
+                document.getElementById('debugInfo').innerHTML = '';
                 
                 const enableMerge = document.getElementById('enableMerge').checked;
                 const firstCol = document.getElementById('firstColumn').value.trim();
                 const secondCol = document.getElementById('secondColumn').value.trim();
                 const mergedCol = document.getElementById('mergedColumn').value.trim();
 
-                logDebug('Processing with merge options:', {
-                    enableMerge,
-                    firstCol,
-                    secondCol,
-                    mergedCol
-                });
-
-                // Validate merge columns if enabled
+                let templateColumns = Object.keys(templateData[0]);
+                
                 if (enableMerge) {
                     if (!firstCol || !secondCol || !mergedCol) {
                         throw new Error('Please fill in all column names for merging.');
@@ -272,29 +362,17 @@
                     if (!sourceData[0].hasOwnProperty(firstCol) || !sourceData[0].hasOwnProperty(secondCol)) {
                         throw new Error(`One or more merge columns not found in source file: ${firstCol}, ${secondCol}`);
                     }
-                }
-
-                // Get template columns and modify if merging is enabled
-                let templateColumns = Object.keys(templateData[0]);
-                
-                if (enableMerge) {
-                    // Remove the original columns that will be merged if they exist
+                    
                     templateColumns = templateColumns.filter(col => 
                         col !== firstCol && col !== secondCol
                     );
-                    // Add the new merged column if it's not already there
                     if (!templateColumns.includes(mergedCol)) {
                         templateColumns.push(mergedCol);
                     }
                 }
 
-                logDebug('Final template columns:', templateColumns);
-
-                // Check for missing columns, excluding merged columns
                 const missingColumns = templateColumns.filter(col => {
-                    if (enableMerge && col === mergedCol) {
-                        return false; // Don't check merged column
-                    }
+                    if (enableMerge && col === mergedCol) return false;
                     return !Object.keys(sourceData[0]).includes(col);
                 });
 
@@ -306,21 +384,16 @@
                     const newRow = {};
                     templateColumns.forEach(col => {
                         if (enableMerge && col === mergedCol) {
-                            // Create merged column
                             newRow[col] = mergeColumns(row, firstCol, secondCol);
                         } else {
-                            // Handle regular columns
                             newRow[col] = cleanData(row[col]);
                         }
                     });
                     return newRow;
                 });
 
-                logDebug('Processed data sample:', processedData[0]);
-
                 showStatus('Processing complete! You can now download the result.', false);
                 document.getElementById('downloadButton').disabled = false;
-                
                 showPreview(processedData.slice(0, 5));
             } catch (error) {
                 showStatus('Error processing files: ' + error.message, true);
@@ -360,8 +433,11 @@
         function downloadResult() {
             if (!processedData) return;
 
-            const csv = Papa.unparse(processedData);
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const csv = Papa.unparse(processedData, {
+                delimiter: ',',
+                encoding: 'UTF-8'
+            });
+            const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
             link.setAttribute('href', url);
