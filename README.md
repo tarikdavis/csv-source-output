@@ -13,6 +13,9 @@
 ## Overview
 This project provides tools for extracting and processing data from CSV files. It originated from a need to extract specific columns from a source CSV file (224 columns) to match a template/output format (16 columns), while cleaning the data by removing currency symbols and mathematical operators.
 
+## Updated 28/10/2024
+Includes option to merge any 2 columns into 1 column in the extracted data csv.
+
 ## Project Evolution
 
 ### Initial Requirements
