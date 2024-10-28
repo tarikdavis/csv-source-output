@@ -73,8 +73,8 @@
         th {
             background-color: #f2f2f2;
         }
-        .filename-input {
-            margin: 20px 0;
+        .filename-input, .column-input {
+            margin: 10px 0;
             padding: 10px;
             border-radius: 4px;
             border: 1px solid #ccc;
@@ -83,11 +83,34 @@
         }
         .input-group {
             margin: 20px 0;
+            padding: 15px;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
         }
         .input-group label {
             display: block;
             margin-bottom: 5px;
             font-weight: bold;
+        }
+        .merge-options {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .checkbox-group {
+            margin: 10px 0;
+        }
+        .debug-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            display: none;
         }
     </style>
 </head>
@@ -108,6 +131,27 @@
             <p>Accepted format: CSV</p>
         </div>
 
+        <div class="merge-options">
+            <h3>Column Merge Options</h3>
+            <div class="checkbox-group">
+                <input type="checkbox" id="enableMerge" name="enableMerge">
+                <label for="enableMerge">Enable Column Merging</label>
+            </div>
+            
+            <div id="mergeFields" style="display: none;">
+                <div class="input-group">
+                    <label for="firstColumn">First Column Name:</label>
+                    <input type="text" id="firstColumn" class="column-input" placeholder="e.g., Name">
+                    
+                    <label for="secondColumn">Second Column Name:</label>
+                    <input type="text" id="secondColumn" class="column-input" placeholder="e.g., Name 2">
+                    
+                    <label for="mergedColumn">New Column Name:</label>
+                    <input type="text" id="mergedColumn" class="column-input" placeholder="e.g., Product Name">
+                </div>
+            </div>
+        </div>
+
         <div class="input-group">
             <label for="outputFilename">Output Filename:</label>
             <input 
@@ -123,12 +167,30 @@
 
         <div id="status"></div>
         <div id="preview" class="preview"></div>
+        <div id="debugInfo" class="debug-info"></div>
     </div>
 
     <script>
         let sourceData = null;
         let templateData = null;
         let processedData = null;
+
+        // Debug logging function
+        function logDebug(message, data) {
+            console.log(message, data);
+            const debugDiv = document.getElementById('debugInfo');
+            debugDiv.style.display = 'block';
+            debugDiv.innerHTML += `<p>${message}</p>`;
+            if (data) {
+                debugDiv.innerHTML += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            }
+        }
+
+        // Show/hide merge fields based on checkbox
+        document.getElementById('enableMerge').addEventListener('change', function(e) {
+            document.getElementById('mergeFields').style.display = 
+                e.target.checked ? 'block' : 'none';
+        });
 
         function cleanData(value) {
             if (value === null || value === undefined) return '';
@@ -148,6 +210,7 @@
                     header: true,
                     complete: function(results) {
                         sourceData = results.data;
+                        logDebug('Source file columns:', Object.keys(sourceData[0]));
                         updateStatus();
                     },
                     error: function(error) {
@@ -164,6 +227,7 @@
                     header: true,
                     complete: function(results) {
                         templateData = results.data;
+                        logDebug('Template file columns:', Object.keys(templateData[0]));
                         updateStatus();
                     },
                     error: function(error) {
@@ -178,13 +242,61 @@
             processButton.disabled = !(sourceData && templateData);
         }
 
+        function mergeColumns(row, firstCol, secondCol) {
+            const first = cleanData(row[firstCol] || '');
+            const second = cleanData(row[secondCol] || '');
+            return [first, second].filter(Boolean).join(' ');
+        }
+
         function processFiles() {
             try {
-                const templateColumns = Object.keys(templateData[0]);
+                document.getElementById('debugInfo').innerHTML = ''; // Clear debug info
                 
-                const missingColumns = templateColumns.filter(col => 
-                    !Object.keys(sourceData[0]).includes(col)
-                );
+                const enableMerge = document.getElementById('enableMerge').checked;
+                const firstCol = document.getElementById('firstColumn').value.trim();
+                const secondCol = document.getElementById('secondColumn').value.trim();
+                const mergedCol = document.getElementById('mergedColumn').value.trim();
+
+                logDebug('Processing with merge options:', {
+                    enableMerge,
+                    firstCol,
+                    secondCol,
+                    mergedCol
+                });
+
+                // Validate merge columns if enabled
+                if (enableMerge) {
+                    if (!firstCol || !secondCol || !mergedCol) {
+                        throw new Error('Please fill in all column names for merging.');
+                    }
+                    if (!sourceData[0].hasOwnProperty(firstCol) || !sourceData[0].hasOwnProperty(secondCol)) {
+                        throw new Error(`One or more merge columns not found in source file: ${firstCol}, ${secondCol}`);
+                    }
+                }
+
+                // Get template columns and modify if merging is enabled
+                let templateColumns = Object.keys(templateData[0]);
+                
+                if (enableMerge) {
+                    // Remove the original columns that will be merged if they exist
+                    templateColumns = templateColumns.filter(col => 
+                        col !== firstCol && col !== secondCol
+                    );
+                    // Add the new merged column if it's not already there
+                    if (!templateColumns.includes(mergedCol)) {
+                        templateColumns.push(mergedCol);
+                    }
+                }
+
+                logDebug('Final template columns:', templateColumns);
+
+                // Check for missing columns, excluding merged columns
+                const missingColumns = templateColumns.filter(col => {
+                    if (enableMerge && col === mergedCol) {
+                        return false; // Don't check merged column
+                    }
+                    return !Object.keys(sourceData[0]).includes(col);
+                });
 
                 if (missingColumns.length > 0) {
                     throw new Error(`Missing columns in source file: ${missingColumns.join(', ')}`);
@@ -193,10 +305,18 @@
                 processedData = sourceData.map(row => {
                     const newRow = {};
                     templateColumns.forEach(col => {
-                        newRow[col] = cleanData(row[col]);
+                        if (enableMerge && col === mergedCol) {
+                            // Create merged column
+                            newRow[col] = mergeColumns(row, firstCol, secondCol);
+                        } else {
+                            // Handle regular columns
+                            newRow[col] = cleanData(row[col]);
+                        }
                     });
                     return newRow;
                 });
+
+                logDebug('Processed data sample:', processedData[0]);
 
                 showStatus('Processing complete! You can now download the result.', false);
                 document.getElementById('downloadButton').disabled = false;
